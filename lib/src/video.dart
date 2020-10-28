@@ -10,15 +10,17 @@ import 'package:screen/screen.dart';
 import 'package:video_player/video_player.dart';
 import 'package:http/http.dart' as http;
 import 'package:wakelock/wakelock.dart';
-import 'package:yoyo_player/src/source/video_style.dart';
-import 'package:yoyo_player/yoyo_player.dart';
 import 'model/audio.dart';
 import 'model/m3u8.dart';
 import 'model/m3u8s.dart';
 import 'model/subtitle.dart';
 import 'model/subtitles.dart';
+import 'source/video_loading_style.dart';
+import 'source/video_style.dart';
+import 'source/video_subtitle_style.dart';
 
 typedef VideoCallback<T> = void Function(T t);
+typedef VideoPlayerControllerCallback = void Function(dynamic);
 
 class YoYoPlayer extends StatefulWidget {
   ///Video source
@@ -45,18 +47,22 @@ class YoYoPlayer extends StatefulWidget {
   /// video Type
   final VideoCallback<String> onpeningvideo;
 
+  /// Callback to handle the controller
+  final VideoPlayerControllerCallback controllerCallback;
+
   /// yoyo_player is a video player that allows you to select HLS video streaming by selecting the quality
-  YoYoPlayer(
-      {Key key,
-      @required this.url,
-      this.subtitle,
-      @required this.aspectRatio,
-      this.videoStyle,
-      this.videoLoadingStyle,
-      this.onfullscreen,
-      this.onpeningvideo,
-      this.subtitleStyle})
-      : super(key: key);
+  YoYoPlayer({
+    Key key,
+    @required this.url,
+    this.subtitle,
+    @required this.aspectRatio,
+    this.videoStyle,
+    this.videoLoadingStyle,
+    this.onfullscreen,
+    this.onpeningvideo,
+    this.subtitleStyle,
+    this.controllerCallback,
+  }) : super(key: key);
 
   @override
   _YoYoPlayerState createState() => _YoYoPlayerState();
@@ -75,21 +81,24 @@ class _YoYoPlayerState extends State<YoYoPlayer>
   Duration duration2;
   double videoSeekSecond;
   double videoDurationSecond;
+
   //m3u8 data video list
   List<M3U8pass> m3u8List = List();
   List<AUDIO> audioList = List();
   String m3u8Content;
   String subtitleContent;
   bool m3u8show = false;
-  bool fullscreen = false;
-  bool showMeau = false;
+  bool isFullScreen = false;
+  bool showMenu = false;
   bool showSubtitles = false;
   bool offline;
   String m3u8quality = "Auto";
   Timer showTime;
   bool sublistener = false;
   Subtitle subtitle;
+
   Size get screenSize => MediaQuery.of(context).size;
+
   @override
   void initState() {
     super.initState();
@@ -118,12 +127,12 @@ class _YoYoPlayerState extends State<YoYoPlayer>
           _fullscreen = false;
           SystemChrome.setEnabledSystemUIOverlays(SystemUiOverlay.values);
         }
-        if (_fullscreen != fullscreen) {
+        if (_fullscreen != isFullScreen) {
           setState(() {
-            fullscreen = !fullscreen;
+            isFullScreen = !isFullScreen;
             _navigateLocally(context);
             if (widget.onfullscreen != null) {
-              widget.onfullscreen(fullscreen);
+              widget.onfullscreen(isFullScreen);
             }
           });
         }
@@ -150,21 +159,21 @@ class _YoYoPlayerState extends State<YoYoPlayer>
         if (widget.onpeningvideo != null) {
           widget.onpeningvideo("MKV");
         }
-        videoControllSetup(url);
+        videoControllerSetup(url);
       } else if (url.endsWith(".mp4")) {
         if (widget.onpeningvideo != null) {
           widget.onpeningvideo("MP4");
         }
-        videoControllSetup(url);
+        videoControllerSetup(url);
       } else if (url.endsWith(".m3u8")) {
         if (widget.onpeningvideo != null) {
           widget.onpeningvideo("M3U8");
         }
 
-        videoControllSetup(url);
+        videoControllerSetup(url);
         getm3u8(url);
       } else {
-        videoControllSetup(url);
+        videoControllerSetup(url);
         getm3u8(url);
       }
       print("online");
@@ -174,7 +183,7 @@ class _YoYoPlayerState extends State<YoYoPlayer>
         offline = true;
         print("offline $offline");
       });
-      videoControllSetup(url);
+      videoControllerSetup(url);
     }
   }
 
@@ -198,10 +207,11 @@ class _YoYoPlayerState extends State<YoYoPlayer>
   }
 
   Future<M3U8s> m3u8video(String video) async {
-    m3u8List.add(M3U8pass(dataquality: "Auto", dataurl: video));
+    m3u8List
+        .add(M3U8pass(dataquality: "Auto", dataurl: video, resolution: 'Auto'));
 
     RegExp regExp = new RegExp(
-      r"#EXT-X-STREAM-INF:(?:.*,RESOLUTION=(\d+x\d+))?:.*,\r?\n(.*)",
+      r"^^#EXT-X-STREAM-INF:.*BANDWIDTH=(\d+).*,RESOLUTION=([\dx]+).*\n(.*)",
       caseSensitive: false,
       multiLine: true,
     );
@@ -212,16 +222,23 @@ class _YoYoPlayerState extends State<YoYoPlayer>
     );
     if (m3u8Content == null && widget.url != null) {
       http.Response response = await http.get(widget.url);
+      debugPrint("RESPONSE CODE ${response.statusCode}");
       if (response.statusCode == 200) {
         m3u8Content = utf8.decode(response.bodyBytes);
       }
     }
     List<RegExpMatch> matches = regExp.allMatches(m3u8Content).toList();
+    debugPrint("M3U8 Content");
+    debugPrint('CCCCCC' + m3u8Content);
     List<RegExpMatch> audiomatches =
         regExpaudio.allMatches(m3u8Content).toList();
+    debugPrint("M3U8 Content End");
+    print("matches ${matches.length}");
     matches.forEach(
       (RegExpMatch regExpMatch) async {
+        debugPrint('${regExpMatch.group(1)} - ${regExpMatch.group(2)}');
         String quality = (regExpMatch.group(1)).toString();
+        String resolution = (regExpMatch.group(2)).toString();
         String sourceurl = (regExpMatch.group(3)).toString();
         final netRegx = new RegExp(r'^(http|https):\/\/([\w.]+\/?)\S*');
         final netRegx2 = new RegExp(r'(.*)\r?\/');
@@ -234,7 +251,6 @@ class _YoYoPlayerState extends State<YoYoPlayer>
           print(match);
           final dataurl = match.group(0);
           url = "$dataurl$sourceurl";
-          print("url network 2 $url $dataurl");
         }
         audiomatches.forEach(
           (RegExpMatch regExpMatch2) async {
@@ -252,7 +268,6 @@ class _YoYoPlayerState extends State<YoYoPlayer>
               print("url network audio  $url $audiourl");
             }
             audioList.add(AUDIO(url: auurl));
-            print(audiourl);
           },
         );
         String audio = "";
@@ -271,7 +286,11 @@ class _YoYoPlayerState extends State<YoYoPlayer>
         } catch (e) {
           print("Couldn't write file");
         }
-        m3u8List.add(M3U8pass(dataquality: quality, dataurl: url));
+        m3u8List.add(M3U8pass(
+          dataquality: quality,
+          dataurl: url,
+          resolution: resolution,
+        ));
       },
     );
     M3U8s m3u8s = M3U8s(m3u8s: m3u8List);
@@ -334,7 +353,7 @@ class _YoYoPlayerState extends State<YoYoPlayer>
   void onselectquality(M3U8pass data) async {
     controller.value.isPlaying ? controller.pause() : controller.pause();
     if (data.dataquality == "Auto") {
-      videoControllSetup(data.dataurl);
+      videoControllerSetup(data.dataurl);
     } else {
       try {
         String text;
@@ -364,7 +383,7 @@ class _YoYoPlayerState extends State<YoYoPlayer>
   }
 
   void toggleFullScreen() {
-    if (fullscreen) {
+    if (isFullScreen) {
       OrientationPlugin.forceOrientation(DeviceOrientation.portraitUp);
     } else {
       OrientationPlugin.forceOrientation(DeviceOrientation.landscapeRight);
@@ -375,11 +394,10 @@ class _YoYoPlayerState extends State<YoYoPlayer>
     clearHideControlbarTimer();
     showTime = Timer(Duration(milliseconds: 5000), () {
       if (controller != null && controller.value.isPlaying) {
-        if (showMeau) {
+        if (showMenu) {
           setState(() {
-            showMeau = false;
             m3u8show = false;
-            controlBarAnimationController.reverse();
+            showMenu = false;
           });
         }
       }
@@ -393,15 +411,21 @@ class _YoYoPlayerState extends State<YoYoPlayer>
   void toggleControls() {
     clearHideControlbarTimer();
 
-    if (!showMeau) {
-      showMeau = true;
+    if (!showMenu) {
+      showMenu = true;
       createHideControlbarTimer();
     } else {
       m3u8show = false;
-      showMeau = false;
+      showMenu = false;
+      Future.delayed(const Duration(milliseconds: 100), () {
+        setState(() {
+          m3u8show = false;
+          showMenu = false;
+        });
+      });
     }
     setState(() {
-      if (showMeau) {
+      if (showMenu) {
         controlBarAnimationController.forward();
       } else {
         controlBarAnimationController.reverse();
@@ -416,18 +440,19 @@ class _YoYoPlayerState extends State<YoYoPlayer>
     } else {
       controller.play();
     }
+    toggleControls();
     setState(() {});
   }
 
   void _navigateLocally(context) async {
-    if (!fullscreen) {
+    if (!isFullScreen) {
       if (ModalRoute.of(context).willHandlePopInternally) {
         Navigator.of(context).pop();
       }
       return;
     }
     ModalRoute.of(context).addLocalHistoryEntry(LocalHistoryEntry(onRemove: () {
-      if (fullscreen) toggleFullScreen();
+      if (isFullScreen) toggleFullScreen();
     }));
   }
 
@@ -439,6 +464,7 @@ class _YoYoPlayerState extends State<YoYoPlayer>
   }
 
   void fastForward() {
+    toggleControls();
     if (controller.value.duration.inSeconds -
             controller.value.position.inSeconds >
         10) {
@@ -458,7 +484,7 @@ class _YoYoPlayerState extends State<YoYoPlayer>
     if (!controller.value.isPlaying) setState(() {});
   }
 
-  List<Widget> videoBuiltInChildrens() {
+  List<Widget> videoBuiltInChildren() {
     return [
       Align(
         alignment: Alignment.bottomCenter,
@@ -487,116 +513,124 @@ class _YoYoPlayerState extends State<YoYoPlayer>
                       ),
                     )
                   : Container(),
-              showMeau
-                  ? Padding(
-                      padding: const EdgeInsets.all(2.0),
-                      child: Container(
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                            color: Colors.white38,
-                            borderRadius: BorderRadius.circular(8)),
-                        child: Padding(
-                          padding: const EdgeInsets.all(5.0),
-                          child: Row(
-                            children: [
-                              Text('$videoSeek/$videoDuration',
-                                  style:
-                                      TextStyle(fontWeight: FontWeight.bold)),
-                              Expanded(
-                                child: VideoProgressIndicator(
-                                  controller,
-                                  allowScrubbing: true,
-                                  colors: VideoProgressColors(
-                                      playedColor:
-                                          widget.videoStyle.playedColor),
-                                  padding: const EdgeInsets.all(8.0),
-                                ),
-                              ),
-                              GestureDetector(
-                                  onTap: () {
-                                    print("fullscreen test");
-                                    try {
-                                      toggleFullScreen();
-                                    } catch (e) {
-                                      print("fullscreen test $e");
-                                    }
-                                  },
-                                  child: widget.videoStyle.fullscreen)
-                            ],
+              Padding(
+                padding: const EdgeInsets.all(2.0),
+                child: AnimatedOpacity(
+                  opacity: showMenu ? 1 : 0,
+                  duration: const Duration(milliseconds: 300),
+                  child: Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.white38,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(5.0),
+                      child: Row(
+                        children: [
+                          Text('$videoSeek/$videoDuration',
+                              style: TextStyle(fontWeight: FontWeight.bold)),
+                          Expanded(
+                            child: VideoProgressIndicator(
+                              controller,
+                              allowScrubbing: true,
+                              colors: VideoProgressColors(
+                                  playedColor: widget.videoStyle.playedColor),
+                              padding: const EdgeInsets.all(8.0),
+                            ),
                           ),
-                        ),
+                          GestureDetector(
+                            onTap: () {
+                              try {
+                                toggleFullScreen();
+                              } catch (e) {}
+                            },
+                            child: widget.videoStyle.fullscreen,
+                          )
+                        ],
                       ),
-                    )
-                  : Container(),
+                    ),
+                  ),
+                ),
+              )
             ],
           ),
         ),
       ),
-      showMeau
-          ? Align(
-              alignment: Alignment.center,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  InkWell(
-                    onTap: () {
-                      rewind();
-                    },
-                    child: widget.videoStyle.backward,
-                  ),
-                  InkWell(
-                    onTap: () {
-                      togglePlay();
-                    },
-                    child: controller.value.isPlaying
-                        ? widget.videoStyle.pause
-                        : widget.videoStyle.play,
-                  ),
-                  InkWell(
-                    onTap: () {
-                      fastForward();
-                    },
-                    child: widget.videoStyle.forward,
-                  ),
-                ],
+      Align(
+        alignment: Alignment.center,
+        child: AnimatedOpacity(
+          opacity: showMenu ? 1 : 0,
+          duration: const Duration(milliseconds: 300),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              InkWell(
+                onTap: () {
+                  rewind();
+                },
+                child: widget.videoStyle.backward,
               ),
-            )
-          : Container(),
-      showMeau == true
-          ? Align(
-              alignment: Alignment.topCenter,
-              child: Container(
-                height: 45,
-                color: Colors.white10,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Padding(
-                      padding: EdgeInsets.only(right: 15.0),
-                      child: InkWell(
-                        onTap: () {
-                          setState(() {
-                            m3u8show = true;
-                          });
-                        },
+              InkWell(
+                onTap: () {
+                  togglePlay();
+                },
+                child: controller.value.isPlaying
+                    ? widget.videoStyle.pause
+                    : widget.videoStyle.play,
+              ),
+              InkWell(
+                onTap: () {
+                  fastForward();
+                },
+                child: widget.videoStyle.forward,
+              ),
+            ],
+          ),
+        ),
+      ),
+      Align(
+        alignment: Alignment.topCenter,
+        child: AnimatedOpacity(
+          opacity: showMenu ? 1 : 0,
+          duration: const Duration(milliseconds: 300),
+          child: Container(
+            height: 45,
+            color: Colors.white10,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Padding(
+                  padding: EdgeInsets.only(right: 15.0),
+                  child: InkWell(
+                    onTap: () {
+                      setState(() {
+                        m3u8show = true;
+                      });
+                    },
+                    child: Padding(
+                      padding: EdgeInsets.all(5),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(5),
+                        ),
                         child: Padding(
-                            padding: EdgeInsets.all(5),
-                            child: Container(
-                                decoration: BoxDecoration(
-                                    // color: Colors.white,
-                                    borderRadius: BorderRadius.circular(5)),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(8.0),
-                                  child: Text(m3u8quality,
-                                      style: widget.videoStyle.qualitystyle),
-                                ))),
+                          padding: const EdgeInsets.all(8.0),
+                          child: Text(
+                            m3u8quality,
+                            style: widget.videoStyle.qualitystyle,
+                          ),
+                        ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            )
-          : Container(),
+              ],
+            ),
+          ),
+        ),
+      ),
       m3u8show == true
           ? (offline == false)
               ? Align(
@@ -606,24 +640,28 @@ class _YoYoPlayerState extends State<YoYoPlayer>
                     child: SingleChildScrollView(
                       child: Column(
                         children: m3u8List
-                            .map((e) => InkWell(
-                                  onTap: () {
-                                    m3u8quality = e.dataquality;
-                                    m3u8show = false;
-                                    duration2 = controller.value.position;
-                                    onselectquality(e);
-                                  },
-                                  child: Container(
-                                      width: 90,
-                                      color: Colors.white,
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(8.0),
-                                        child: Text(
-                                          "${e.dataquality}",
-                                          style: widget.videoStyle.qashowstyle,
-                                        ),
-                                      )),
-                                ))
+                            .map(
+                              (e) => InkWell(
+                                onTap: () {
+                                  m3u8quality = e.resolution;
+                                  m3u8show = false;
+                                  duration2 = controller.value.position;
+                                  onselectquality(e);
+                                  widget.controllerCallback(controller);
+                                },
+                                child: Container(
+                                  width: 90,
+                                  color: Colors.white,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: Text(
+                                      "${e.resolution}",
+                                      style: widget.videoStyle.qashowstyle,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            )
                             .toList(),
                       ),
                     ),
@@ -634,23 +672,18 @@ class _YoYoPlayerState extends State<YoYoPlayer>
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: <Widget>[
-                      InkWell(
-                        onTap: () {
-                          Navigator.pop(context);
-                        },
-                        child: Padding(
-                          padding: EdgeInsets.only(left: 15.0),
-                          child: Icon(Icons.arrow_back),
-                        ),
-                      ),
-                      Container(
-                        child: Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: Text(
-                            "Offline",
-                            style: TextStyle(
+                      Padding(
+                        padding: EdgeInsets.only(left: 15.0),
+                        child: Container(
+                          child: Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: Text(
+                              "Offline",
+                              style: TextStyle(
                                 color: Colors.black,
-                                fontWeight: FontWeight.bold),
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -663,11 +696,9 @@ class _YoYoPlayerState extends State<YoYoPlayer>
 
   @override
   Widget build(BuildContext context) {
-    final videoChildrens = <Widget>[
+    final videoChildren = <Widget>[
       GestureDetector(
-        onTap: () {
-          toggleControls();
-        },
+        onTap: toggleControls,
         onDoubleTap: () {
           togglePlay();
         },
@@ -685,18 +716,23 @@ class _YoYoPlayerState extends State<YoYoPlayer>
         ),
       ),
     ];
-    videoChildrens.addAll(videoBuiltInChildrens());
-    return AspectRatio(
-      aspectRatio:
-          fullscreen ? _calculateAspectRatio(context) : widget.aspectRatio,
-      child: controller.value.initialized
-          ? Stack(children: videoChildrens)
-          : widget.videoLoadingStyle.loading,
+    videoChildren.addAll(videoBuiltInChildren());
+    return Center(
+      child: SizedBox(
+        height: isFullScreen ? MediaQuery.of(context).size.height : null,
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: controller.value.initialized
+              ? Stack(children: videoChildren)
+              : widget.videoLoadingStyle.loading,
+        ),
+      ),
     );
   }
 
-  void videoControllSetup(String url) {
+  void videoControllerSetup(String url) {
     videoInit(url);
+    widget.controllerCallback(controller);
     controller.addListener(listener);
     controller.play();
   }
@@ -728,20 +764,21 @@ class _YoYoPlayerState extends State<YoYoPlayer>
     Subtitles subtitles = await getSubtitles(sub);
     VideoPlayerValue latestValue = videoPlayerController.value;
 
-    Duration videoPlayerPosition = latestValue.position;
+    final videoPlayerPosition = latestValue.position;
     if (videoPlayerPosition != null) {
-      subtitles.subtitles.forEach((Subtitle subtitleItem) {
+      for (final subtitleItem in subtitles.subtitles) {
         if (videoPlayerPosition.inMilliseconds >
                 subtitleItem.startTime.inMilliseconds &&
             videoPlayerPosition.inMilliseconds <
                 subtitleItem.endTime.inMilliseconds) {
-          if (this.mounted) {
+          if (mounted) {
             setState(() {
               subtitle = subtitleItem;
             });
           }
         }
-      });
+      }
+      ;
     }
   }
 
@@ -763,7 +800,7 @@ class _YoYoPlayerState extends State<YoYoPlayer>
   }
 
   String convertDurationToString(Duration duration) {
-    var minutes = duration.inMinutes.toString();
+    var minutes = duration?.inMinutes?.toString() ?? '0';
     if (minutes.length == 1) {
       minutes = '0' + minutes;
     }

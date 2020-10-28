@@ -1,4 +1,5 @@
-import 'package:yoyo_player/src/model/subtitle.dart';
+
+import 'subtitle.dart';
 
 class Subtitles {
   final List<Subtitle> subtitles;

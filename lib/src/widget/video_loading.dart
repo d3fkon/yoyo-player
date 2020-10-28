@@ -6,16 +6,22 @@ class VideoLoading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: Colors.white,
+      color: Colors.black,
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             CircularProgressIndicator(
-              valueColor: new AlwaysStoppedAnimation<Color>(Colors.amber),
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.indigo),
             ),
             SizedBox(height: 10),
-            Text('Loading...')
+            Text(
+              'Loading stream',
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+                color: Colors.white,
+              ),
+            ),
           ],
         ),
       ),
